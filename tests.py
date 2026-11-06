@@ -1,4 +1,4 @@
-from arithmetic import add, subtract, multiply
+from arithmetic import add, subtract, multiply, divide
 
 N = 3
 
@@ -29,8 +29,17 @@ def test_mult():
             assert got == expected, f"{x} * {y}: expected {expected}, got {got}"
     print("mult: all tests passed")
 
+def test_div():
+    for x in range(2**N):
+        for y in range(1, 2**N):
+            expected = (x // y, x % y)
+            got = divide(x, y, N)
+            assert got == expected, f"{x} / {y}: expected (q, r) = {expected}, got {got}"
+    print("div: all tests passed")
+
 
 if __name__ == "__main__":
     test_add()
     test_sub()
     test_mult()
+    test_div()

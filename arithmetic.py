@@ -87,10 +87,40 @@ def build_multiplier(x, y, n):
         qc.measure(acc[k], out[k])
     return qc
 
+def build_divider(x, y, n):
+    m = n + 1
+    a = QuantumRegister(n, "a")        
+    d = QuantumRegister(m, "d")        
+    z = QuantumRegister(1, "zero")     
+    qout = ClassicalRegister(n, "q")
+    rout = ClassicalRegister(n, "r")
+    qc = QuantumCircuit(a, d, z, qout, rout)
+
+    load(qc, a, x)
+    load(qc, d, y)
+
+    r = [z[0]] * m
+    qbits = [None] * n
+
+    for step in range(n):
+        bit = a[n - 1 - step]          
+        shifted = [bit] + r[:m - 1]   
+        diff, k = ripple_sub(qc, shifted, list(d), f"s{step}")
+        r = mux(qc, k, diff, shifted, f"s{step}")
+        qbits[n - 1 - step] = k        
+
+    for i in range(n):
+        qc.measure(qbits[i], qout[i])
+        qc.measure(r[i], rout[i])
+    return qc
+
+
+
+
 
 def run(qc, method="automatic"):
     counts = AerSimulator(method=method).run(qc, shots=1).result().get_counts()
-    bitstring = next(iter(counts))
+    bitstring = next(iter(counts)).replace(" ", "")
     return int(bitstring, 2)
 
 
@@ -112,5 +142,76 @@ def ripple_add(qc, xs, ys, name):
     for i in range(m):
         full_adder(qc, xs[i], ys[i], c[i], s[i], c[i + 1])
     return list(s) + [c[m]]
+
+def ripple_sub(qc, xs, ys, name):
+    m = len(xs)
+    s = QuantumRegister(m, name + "_s")
+    c = QuantumRegister(m + 1, name + "_c")
+    qc.add_register(s, c)
+
+    qc.x(c[0])
+    for q in ys:
+        qc.x(q)
+    for i in range(m):
+        full_adder(qc, xs[i], ys[i], c[i], s[i], c[i + 1])
+    for q in ys:
+        qc.x(q)
+
+    return list(s), c[m]
+
+def mux(qc, k, diff, old, name):
+    m = len(diff)
+    res = QuantumRegister(m, name + "_m")
+    qc.add_register(res)
+    for i in range(m):
+        qc.ccx(k, diff[i], res[i])      
+    qc.x(k)                             
+    for i in range(m):
+        qc.ccx(k, old[i], res[i])       
+    qc.x(k)                             
+    return list(res)
+
+
 def multiply(x, y, n=4):
     return run(build_multiplier(x, y, n), method="matrix_product_state")
+
+def divide(x, y, n=3):
+    if y == 0:
+        raise ZeroDivisionError("division by zero")
+    qc = build_divider(x, y, n)
+    raw = run(qc, method="matrix_product_state")
+    r = raw >> n             
+    q = raw & (2**n - 1)
+    return q, r
+
+def try_subtract(rv, dv, n=3):
+    m = n + 1
+    r = QuantumRegister(m, "r")
+    d = QuantumRegister(m, "d")
+    out = ClassicalRegister(m + 1, "out")
+    qc = QuantumCircuit(r, d, out)
+    load(qc, r, rv)
+    load(qc, d, dv)
+
+    diff, carry = ripple_sub(qc, list(r), list(d), "t")
+    for i in range(m):
+        qc.measure(diff[i], out[i])
+    qc.measure(carry, out[m])
+
+    raw = run(qc, method="matrix_product_state")
+    return raw >> m, raw & (2**m - 1)      # (carry, difference bits)
+
+def try_mux(kv, dv, ov, m=4):
+    k = QuantumRegister(1, "k")
+    d = QuantumRegister(m, "d")
+    o = QuantumRegister(m, "o")
+    out = ClassicalRegister(m, "out")
+    qc = QuantumCircuit(k, d, o, out)
+    if kv:
+        qc.x(k[0])
+    load(qc, d, dv)
+    load(qc, o, ov)
+    res = mux(qc, k[0], list(d), list(o), "t")
+    for i in range(m):
+        qc.measure(res[i], out[i])
+    return run(qc, method="matrix_product_state")
